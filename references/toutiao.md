@@ -111,29 +111,31 @@ await browser_wait_for({ time: 3 });
 
 西瓜视频页把数据塞在 `window._SSR_DATA_` 或 `__INITIAL_STATE__`：
 
+> ⚠️ **移动版 `m.ixigua.com/dx/{id}`（2026-10 实测）**：原选择器已失效——`h1` 会取到页脚站名、`[class*='author']` 混入“XX粉丝XX视频”计数、`[class*='time']` 拿到播放器时长 “00:00 / 00:00”。移动页改用下方语义化 class（`.xigua-*`）；这些 class 在移动页稳定，且 `<video>.src` 本身即为可用的 http 流地址。PC 版仍可沿用 `_SSR_DATA_`。
+
 ```js
 () => {
-  const title =
-    document.querySelector("h1")?.textContent?.trim()
-    || document.title;
+  const q = (s) => document.querySelector(s);
+  const txt = (s) => q(s)?.textContent?.trim() || "";
 
-  const author =
-    document.querySelector(".author-name")?.textContent?.trim()
-    || document.querySelector("[class*='author']")?.textContent?.trim();
+  const title = txt("h1.xigua-feedtitle")
+    || q('meta[property="og:title"]')?.content?.replace(/\s*\|\s*西瓜视频\s*$/, "")
+    || document.title.replace(/\s*\|\s*西瓜视频\s*$/, "");
 
-  const publishTime =
-    document.querySelector(".video-time")?.textContent?.trim()
-    || document.querySelector("[class*='time']")?.textContent?.trim();
-
-  const desc =
-    document.querySelector(".video-desc")?.textContent?.trim()
-    || document.querySelector("[class*='desc']")?.textContent?.trim()
+  const author = txt(".xigua-author-main-name")
+    || txt(".xigua-author-main")
     || "";
 
-  const videoEl = document.querySelector("video");
-  const cover = videoEl?.poster
-    || document.querySelector('meta[property="og:image"]')?.content
+  const publishTime = (Array.from(document.querySelectorAll(".xigua-timetag"))
+    .map(e => e.textContent.trim())
+    .find(t => /发布/.test(t)) || "").match(/(\d{4}-\d{2}-\d{2})/)?.[1] || "";
+
+  const desc = txt(".xigua-describe")
+    || q('meta[name="description"]')?.content
     || "";
+
+  const videoEl = q("video");
+  const cover = q('meta[property="og:image"]')?.content || videoEl?.poster || "";
   const videoSrc = videoEl?.src || "";
 
   // 西瓜的 SSR_DATA 里可能含真实流地址
@@ -147,6 +149,9 @@ await browser_wait_for({ time: 3 });
       realStreamUrl = videoData.playInfo.url_list[0];
     }
   } catch (e) {}
+
+  // 移动页 _SSR_DATA_ 常为空对象，此时 <video>.src 本身即可用的 http 流
+  const stream = realStreamUrl || (videoSrc.startsWith("http") ? videoSrc : "");
 
   return {
     platform: "ixigua",
@@ -171,5 +176,6 @@ await browser_wait_for({ time: 3 });
 - **作者提取**：优先取 `a[href*='/user/']` 的文本作为作者名；`(?:记者|作者|编辑)\s+(\S{1,6})` innerText 正则仅作兜底，且需排除"关注/粉丝"等按钮词——真实页面"作者"标签旁紧跟"关注"按钮，正则会误捕。
 - **域名判断**：URL 含 `ixigua.com` 走视频提取器，含 `toutiao.com/article` 走文章提取器。如果含 `/video/` 也走视频提取器。
 - **移动版 vs PC 版**：移动版（`m.toutiao.com` / `m.ixigua.com`）DOM 更简单更稳定，如果 PC 版提取失败，可以尝试替换 URL 加 `m.` 前缀重试。
-- **视频流地址**：西瓜视频流地址在 `_SSR_DATA_` 里相对抖音容易拿，但同样可能需要签名。blob URL 不返回。
+- **视频流地址**：PC 版流地址在 `_SSR_DATA_` 里相对抖音容易拿，但同样可能需要签名；**移动页 `m.ixigua.com/dx/{id}` 的 `_SSR_DATA_` 常为空对象，但 `<video>.src` 本身即为可用的 http 流地址**，直接取 `video.src` 即可。blob URL 不返回。
+- **西瓜移动页 DOM（`m.ixigua.com/dx/{id}`，2026-10 实测）**：标题 `h1.xigua-feedtitle`（注意 "视频来源于网络" 可能是该视频真实标题，不是 bug）；作者 `.xigua-author-main-name`（`.xigua-author-main` 会混入 "XX粉丝XX视频" 计数）；发布时间在 `.xigua-timetag` 里找含 "发布" 的项；简介 `.xigua-describe`。**不要用宽泛的 `[class*='author']` / `[class*='time']`**——前者混入粉丝数、后者拿到播放器时长 "00:00 / 00:00"。
 - **登录墙**：头条系内容通常无需登录即可查看，但有时会弹"打开 App"遮罩。如果检测到 `.open-app-mask` 或类似元素，可以滚动避开或直接读 DOM（数据其实已加载）。
