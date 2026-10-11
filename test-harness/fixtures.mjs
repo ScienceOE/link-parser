@@ -272,6 +272,34 @@ async function main() {
   results.generic_fixture_empty = await page.evaluate(`(${genericSrc3})()`);
   check("generic: empty page -> EMPTY", results.generic_fixture_empty.error === "EMPTY", JSON.stringify(results.generic_fixture_empty));
 
+  // ---------- Batch 4: douyin 出口契约加固 ----------
+  // 风控/未登录空壳页：有导航+页脚文本、推荐流 <video>、作者锚点，
+  // 但没有 <h1>、没有标题、没有任何视频信息。旧版会返回"没有 error 字段的空壳"，
+  // 下游只检查 result.error 的消费者会误判成功。必须返回 ErrorResult。
+  await load(`<!DOCTYPE html><html><head><title></title></head><body>
+    <div>开启读屏标签</div><div>精选</div><div>推荐</div><div>关注</div>
+    <div>2026 © 抖音</div><div>京ICP备16016397号-3</div>
+    <div>信息网络传播视听节目许可证 0126733</div>
+    <video src="blob:https://www.douyin.com/x"></video>
+    <a href="https://www.douyin.com/user/MS4wLjABAAAAtest"><img alt="某作者" src="avatar"></a>
+  </body></html>`);
+  results.douyin_fixture_shell = await page.evaluate(`(${douyinSrc3})()`);
+  const ds = results.douyin_fixture_shell;
+  check("douyin: 空壳页必须带 error（不得静默成功）", !!ds.error, JSON.stringify(ds));
+  check("douyin: 空壳页 error=NO_CONTENT", ds.error === "NO_CONTENT", JSON.stringify(ds));
+  check("douyin: 空壳页 ErrorResult 形状完整", ds.platform === "douyin" && !!ds.url && !!ds.extractedAt && !!ds.partial, JSON.stringify(ds));
+
+  // document.body === null（SPA 客户端跳转窗口）不得抛异常
+  await load(`<!DOCTYPE html><html><head><title>t</title></head><body><h1>标题</h1><video></video><img alt="作者" src="a"></body></html>`);
+  results.douyin_fixture_body_null = await page.evaluate(`(() => {
+    Object.defineProperty(document, "body", { get: () => null, configurable: true });
+    try { return { threw: false, result: (${douyinSrc3})() }; }
+    catch (e) { return { threw: true, error: String(e && e.message) }; }
+  })()`);
+  const dbn = results.douyin_fixture_body_null;
+  check("douyin: document.body=null 不得抛异常", dbn.threw === false, JSON.stringify(dbn.error));
+  check("douyin: document.body=null 仍返回结构化结果", !dbn.threw && !!dbn.result && dbn.result.platform === "douyin", JSON.stringify(dbn));
+
   await browser.close();
 
   writeFileSync(path.join(OUT_DIR, "fixtures.json"), JSON.stringify(results, null, 2));

@@ -28,7 +28,8 @@ await browser_evaluate({ function: "() => !!document.querySelector('video')" });
 
 ```js
 () => {
-  const text = document.body.innerText;
+  // body 在 SPA 客户端跳转的瞬间可能为 null（头条同类 bug 已修，抖音此处补齐）
+  const text = document.body?.innerText || "";
 
   // 0. 前置守卫：多锚点证据门槛判定"视频不存在"——
   //    明确不存在文本 → VIDEO_NOT_FOUND；
@@ -174,6 +175,25 @@ await browser_evaluate({ function: "() => !!document.querySelector('video')" });
     }
   } catch (e) {}
 
+  // 11. 空结果兜底守卫（契约兜底）：如果标题与正文/章节/发布时间/统计/粉丝信息
+  //     全部为空，说明页面根本没有可用视频信息（未登录、风控空壳或已删除），
+  //     按 SKILL.md 契约返回 ErrorResult —— 绝不返回"没有 error 字段的空壳"，
+  //     否则下游只检查 result.error 的消费者会把它当成解析成功、静默拿到空标题。
+  //     注意：author 不参与判定 —— 推荐流里的头像 alt 会在空壳页留下假作者名。
+  //     标题为抖音默认站名（"在抖音记录美好生活…"）同样视为无标题。
+  const hasRealTitle = !!title && !/^在抖音记录美好生活/.test(title);
+  const statsHasValue = [likes, comments, collects, shares].some(Boolean);
+  if (!hasRealTitle && !aiSummary && chapters.length === 0 && !timeMatch && !statsHasValue && !fansMatch) {
+    return {
+      platform: 'douyin',
+      url: location.href,
+      error: 'NO_CONTENT',
+      message: '页面未渲染出任何视频信息（可能未登录/被风控，或视频已删除）。请在已登录的 Playwright 浏览器中重试，或回退 generic。',
+      partial: { title: title || '', cover },
+      extractedAt: new Date().toISOString(),
+    };
+  }
+
   return {
     platform: 'douyin',
     url: location.href,
@@ -206,6 +226,8 @@ await browser_evaluate({ function: "() => !!document.querySelector('video')" });
 - **选择器策略**：抖音前端**经常移除/重命名 `data-e2e` 属性**，class 名也用 CSS Modules 混淆过。本提取器用 `innerText` 正则 + `h1`/`img[alt]` 等稳定锚点，不依赖易变的属性选择器。如果仍提取失败，回退到 generic OG meta 兜底。
 - **统计数字提取的脆弱性**：只在"视频信息区"（`发布时间` 之前的文本）内取数，页脚备案号等噪声天然排除。方案 A 匹配四个连续纯数字行；方案 B 按行逐字段取数——点赞数取"抢首评/评论"按钮前相邻的纯数字行，评论数取"N 条评论"内嵌数字。如果抖音改版把统计数字打散、加了图标，或改用"1.2万"缩写显示，可能只拿到部分字段或顺序错乱，取不到的字段留空（undefined），但不会塞无关数字。评论/收藏/分享为 0 时抖音前端不渲染数字（只显示"抢首评/收藏/分享"），这些字段留空属正常。
 - **视频不存在的前置守卫（多锚点证据门槛）**：明确文本"你要观看的视频不存在"直接判 `VIDEO_NOT_FOUND`；否则要求"标题为默认站名或空 + 无 h1 + 无 `<video>` + 无作者锚点（img[alt]）"多重证据同时成立才判 `VIDEO_NOT_FOUND`——避免误杀未水合的有效页，也堵住空 title 无锚点的空壳漏检。其余情况继续提取，未水合页交给 SKILL.md 的等待/重试逻辑。
+- **空结果兜底守卫（出口契约，与前置守卫互补）**：前置守卫靠"锚点为空"判存在性，而**风控/未登录空壳页往往带推荐流的 `<video>` 和作者头像**，锚点非空 → 前置守卫不触发，旧版会返回 `{title:"", error:<缺失>}` 的空壳"成功"结果。所以出口再加一道判定：标题为空或仅为抖音默认站名，且正文/章节/发布时间/统计/粉丝全空 → 返回 `error: "NO_CONTENT"` 的 ErrorResult（含 `partial`）。两道守卫分工：**进口判"视频不存在"，出口判"什么都没解析到"**，任何情况下都不会输出无 `error` 的空壳。
+- **`document.body` 可能为 null**：SPA 客户端跳转瞬间 `document.body` 为 null，本提取器所有 body 访问均带 `?.` 防护（与 toutiao/bilibili/wechat 一致），失败时返回 ErrorResult 而非抛异常。
 - **视频流地址**：抖音的 `<video>.src` 是 `blob:https://...`，不能直接下载。真实 mp4 地址藏在 `RENDER_DATA`（URI 编码的 JSON）或动态接口里，且接口需要 `_signature` 参数。在已登录浏览器里 `RENDER_DATA` 有时能直接拿到 `play_addr.url_list[0]`，但经常被加密。本 skill 在拿不到时返回空 `media` 数组，并在 `extra.note` 里说明原因。
 - **iesdouyin.com 分享页**结构更老更稳定，如果遇到 `www.iesdouyin.com/share/video/`，DOM 更简单（`.video-info`、`.author` 等），但用户量少。
 - **登录墙**：如果 navigate 后 URL 含 `/login` 或页面显示"扫码登录"，按 SKILL.md 的 "When to stop and ask" 处理。注意：抖音视频页**未登录也能看内容**，但评论区会显示"请先登录后发表评论"--这不影响提取，提取的是视频本身的数据。

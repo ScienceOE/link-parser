@@ -20,6 +20,11 @@ jobs:
         with:
           node-version: 20
 
+      # 分类器单元测试：纯 Node、无依赖、秒级，先做最快的门禁。
+      - name: Classifier unit tests (no browser)
+        working-directory: test-harness
+        run: node classify.test.mjs
+
       - name: Install test-harness dependencies
         working-directory: test-harness
         run: npm ci
@@ -27,6 +32,11 @@ jobs:
       - name: Install Playwright Chromium
         working-directory: test-harness
         run: npx playwright install chromium
+
+      # 离线 fixture 不依赖外网与登录态，是最可靠的回归门禁，先跑它。
+      - name: Run offline fixture assertions
+        working-directory: test-harness
+        run: node fixtures.mjs
 
       - name: Run extractor regression (test-links 全量)
         working-directory: test-harness

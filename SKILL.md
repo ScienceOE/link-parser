@@ -1,6 +1,12 @@
 ---
 name: link-parser
 description: Parse links from Bilibili, Douyin, WeChat OA articles, Toutiao/Xigua, Zhihu, and generic web pages — extract metadata, cover, body text, and media URLs. Use when the user shares a link and asks to 解析/总结/看看. Optional video frame capture (截帧) or recording (录屏) on explicit request only.
+metadata:
+  # 本 skill 不是自包含的：执行能力来自宿主提供的浏览器工具 + 已登录会话。
+  # 宿主未挂载这些工具时，skill 仍会被发现，但无法执行——请据此提示用户。
+  requires:
+    - playwright-browser-tools   # browser_navigate / browser_evaluate / browser_wait_for
+    - logged-in-session          # B站/抖音/知乎等需要登录态才能拿到完整内容
 ---
 
 # Link Parser

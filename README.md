@@ -46,17 +46,18 @@ node fixtures.mjs                     # 离线 fixture 断言（含 bug 回归�
 
 说明：
 
-- `run-tests.mjs` 用真实页面跑 `references/` 里的提取器，结果写到 `results/*.json`；B站/知乎等被 WAF 拦截时可换 `BROWSER=chrome` 用本机 Chrome 复跑。
-- `fixtures.mjs` 不依赖外网，用构造 DOM 验证提取器逻辑（bilibili 字段映射 / 知乎统计清洗 / 抖音 stats 与 VIDEO_NOT_FOUND / 头条 author），任一条断言失败会以非零码退出。
+- `run-tests.mjs` 用真实页面跑 `references/` 里的提取器，结果写到 `results/*.json`；B站/知乎等被 WAF 拦截时可换 `BROWSER=chrome` 用本机 Chrome 复跑。与 `ci-run.mjs` 共用 `classify.mjs`，同样有退出码语义（出现 EXTRACTOR_FAIL 时以非零码退出）。
+- `fixtures.mjs` 不依赖外网，用构造 DOM 验证提取器逻辑（bilibili 字段映射 / 知乎统计清洗 / 抖音 stats 与 VIDEO_NOT_FOUND / 头条 author / 抖音空壳与 `document.body=null` 契约），任一条断言失败会以非零码退出。
+- `classify.test.mjs` 是纯 Node 的分类器单元测试（无依赖、秒级），锁定 PASS/BLOCKED/EXTRACTOR_FAIL 三档语义——特别是"内容容器存在时提取器出错绝不放行"。
 - 抖音无稳定公开深链，`run-tests.mjs` 默认从首页推荐流发现链接，也可用 `DOUYIN_URL=https://www.douyin.com/video/xxx` 指定。
 - B站/知乎补测用 `node real-browser.mjs`（playwright-core + 本机系统 Chrome，临时 profile，不下载浏览器；headless 被拦时用 `HEADED=1` 试有头模式）。
 - 实测属于"解析单条公开页面"，请勿用于批量采集。
 
 ### CI 自动回归
 
-`.github/workflows/regression.yml`：每周一 07:23 UTC 定时 + PR 触发，用 Playwright 官方 Chromium 跑 `test-links.md` 全量链接（`ci-run.mjs`），逐项结果输出到 job summary（GitHub Actions → 该 job 的 Summary 页）。
+`.github/workflows/regression.yml`：每周一 07:23 UTC 定时 + PR 触发，先跑离线 fixture（`fixtures.mjs`，不依赖外网），再用 Playwright 官方 Chromium 跑 `test-links.md` 全量链接（`ci-run.mjs`），逐项结果输出到 job summary（GitHub Actions → 该 job 的 Summary 页）。
 
-结果分三档：**PASS**（正向：无 error 且核心字段齐全；反向：守卫返回预期 error 码）/ **BLOCKED**（仅限导航失败/超时/目标站连接级错误——环境限制，计为警告不 fail）/ **EXTRACTOR_FAIL**（提取器抛异常、正向拿到 error 或空 title、反向拿不到预期 error 码——只有这档会让 job 变红）。
+结果分三档：**PASS**（正向：无 error 且核心字段齐全；反向：守卫返回预期 error 码）/ **BLOCKED**（有平台级拦截证据——导航失败/超时、HTTP 401/403/412/429/451/503、响应正文是反爬 JSON 或风控文案、或提取器已报错且页面确实缺少该平台的内容容器；属环境限制，计为警告不 fail）/ **EXTRACTOR_FAIL**（提取器抛异常、正向拿到 error 或空 title、反向拿不到预期 error 码——只有这档会让 job 变红）。分类逻辑统一在 `test-harness/classify.mjs`。
 
 ## 安装
 
