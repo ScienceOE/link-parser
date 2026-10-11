@@ -14,6 +14,22 @@ import { classify, looksAntiBot, renderSummary, summarize, describeResult } from
 const OUT_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "results");
 mkdirSync(OUT_DIR, { recursive: true });
 
+// SPA 在 evaluate 期间会客户端重载，导致 "Execution context was destroyed"。
+// 这是导航竞态，不是提取器 bug —— run-tests.mjs 一直有重试，ci-run 此前是裸调用，
+// 结果把竞态误判成 EXTRACTOR_FAIL（真实 CI 日志里 bilibili-not-found 就是这么红的）。
+async function evaluateWithRetry(page, expression, attempts = 3) {
+  let lastErr;
+  for (let i = 0; i < attempts; i++) {
+    try {
+      return await page.evaluate(expression);
+    } catch (e) {
+      lastErr = e;
+      await page.waitForTimeout(800);
+    }
+  }
+  throw lastErr;
+}
+
 // 与 references/test-links.md 保持一致
 // contentSelector：该平台"页面已渲染出内容"的判定锚点；提取器报错且该锚点不存在
 //                  → 判 BLOCKED（未登录/未水合），而不是提取器 bug。
@@ -75,9 +91,9 @@ async function main() {
         try {
           const src = getExtractorSource(c.platform);
           const expr = c.arg ? `(${src})("${c.arg}")` : `(${src})()`;
-          r = await page.evaluate(expr);
+          r = await evaluateWithRetry(page, expr);
         } catch (e) {
-          // 提取器自身抛异常 = 提取器 bug（即便页面被拦也不该抛，契约要求返回 ErrorResult）
+          // 重试后仍抛异常 = 提取器 bug（即便页面被拦也不该抛，契约要求返回 ErrorResult）
           rec.status = "EXTRACTOR_FAIL";
           rec.detail = "extractor threw: " + String(e?.message || e).slice(0, 120);
           results[c.name] = rec;
